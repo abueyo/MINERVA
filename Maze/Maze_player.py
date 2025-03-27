@@ -55,7 +55,7 @@ class MazePlayer:
             'bricks_24.gif', 'treasure_24.gif'
         ]
         for shape in shapes:
-            turtle.register_shape(f'./Maze/images/{shape}')
+            turtle.register_shape(f'MINERVA/Maze/images/{shape}')
 
     def _calc_screen_coordinates(self, row_index, col_index):
         screen_x = self.screen_x_pixel_offset + (col_index * self.MAZE_BLOCK_PIXEL_WIDTH)
@@ -187,7 +187,7 @@ class MazePlayer:
 class Pen(turtle.Turtle):
     def __init__(self):
         super().__init__()
-        self.shape("./Maze/images/bricks_24.gif")
+        self.shape("MINERVA/Maze/images/bricks_24.gif")
         self.color("white")
         self.penup()
         self.speed(0)
@@ -195,13 +195,13 @@ class Pen(turtle.Turtle):
 class Player(turtle.Turtle):
     def __init__(self):
         super().__init__()
-        self.shape("./Maze/images/player_24_right.gif")
+        self.shape("MINERVA/Maze/images/player_24_right.gif")
         self.color("blue")
         self.penup()
         self.speed(0)
 
     def move_if_valid(self, move_to_x, move_to_y, walls, direction):
-        self.shape(f"./Maze/images/player_24_{direction}.gif")
+        self.shape(f"MINERVA/Maze/images/player_24_{direction}.gif")
         if (move_to_x, move_to_y) not in walls:
             self.goto(move_to_x, move_to_y)
 
@@ -224,7 +224,7 @@ def get_random_valid_state(self):
 class Treasure(turtle.Turtle):
     def __init__(self, x, y):
         super().__init__()
-        self.shape("./Maze/images/treasure_24.gif")
+        self.shape("MINERVA/Maze/images/treasure_24.gif")
         self.color("gold")
         self.penup()
         self.speed(0)
