@@ -8,8 +8,102 @@ import time
 import os                                                                              
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
-def run_hierarchical_simulation(noise_level=0, num_episodes=20):
+def collect_maze_positions(maze_map, player_pos_index, goal_pos_index, 
+                           exploration_steps=10000, save_path="maze_positions.csv"):
+    """
+    Perform pre-exploration to collect positional data from the maze environment.
+    
+    Parameters:
+    - maze_map: The maze map to explore
+    - player_pos_index: Initial player position index
+    - goal_pos_index: Goal position index
+    - exploration_steps: Number of steps to explore (default: 5000)
+    - save_path: Path to save the collected positions (default: "maze_positions.csv")
+    
+    Returns:
+    - Path to the saved CSV file
+    """
+    print(f"Starting pre-exploration to collect positional data...")
+    
+    # Check if the file already exists for this maze configuration
+    if os.path.exists(save_path):
+        print(f"Position data already exists at {save_path}, using existing data")
+        return save_path
+    
+    # Initialize maze
+    Maze = MazePlayer(maze_map=maze_map, 
+                     player_index_pos=player_pos_index, 
+                     goal_index_pos=goal_pos_index)
+    
+    # Set seed for reproducibility
+    np.random.seed(42)
+    
+    # Storage for visited positions
+    positions = []
+    
+    # Reset player to initial position
+    Maze.reset_player()
+    current_state = Maze.get_player_pos()
+    
+    # Perform random exploration to collect positions
+    for step in range(exploration_steps):
+        # Store current position
+        positions.append(current_state)
+        
+        # Take random action
+        action = np.random.randint(0, 4)  # Assuming 4 possible actions
+        Maze.move_player(action)
+        current_state = Maze.get_player_pos()
+        
+        # Print progress occasionally
+        if (step + 1) % 1000 == 0:
+            print(f"Pre-exploration: {step + 1}/{exploration_steps} steps completed")
+            print(f"Unique positions collected: {len(set(map(tuple, positions)))}")
+        
+        # If goal reached, reset player
+        if current_state == Maze.get_goal_pos():
+            Maze.reset_player()
+            current_state = Maze.get_player_pos()
+    
+    # Convert positions to DataFrame
+    df = pd.DataFrame(positions, columns=['x', 'y'])
+    
+    # Remove duplicates to get unique positions
+    df = df.drop_duplicates()
+    
+    # Save to CSV
+    df.to_csv(save_path, index=False)
+    
+    print(f"Pre-exploration complete. Collected {len(df)} unique positions.")
+    print(f"Position data saved to {save_path}")
+    
+    return save_path
+
+def load_and_prepare_training_data(csv_path):
+    """
+    Load position data from CSV and prepare for HGWRSOM training.
+    
+    Parameters:
+    - csv_path: Path to the CSV file containing position data
+    
+    Returns:
+    - training_data: NumPy array ready for training
+    """
+    # Load data from CSV
+    df = pd.read_csv(csv_path)
+    
+    # Convert to NumPy array
+    training_data = df.values
+    
+    print(f"Loaded {len(training_data)} training samples from {csv_path}")
+    print(f"Data range: X[{training_data[:, 0].min():.2f}, {training_data[:, 0].max():.2f}], "
+          f"Y[{training_data[:, 1].min():.2f}, {training_data[:, 1].max():.2f}]")
+    
+    return training_data
+
+def run_hierarchical_simulation(noise_level=0, num_episodes=15):
     #get the maze details 
     maze_map, player_pos_index, goal_pos_index = MazeMaps.get_default_map() 
 
@@ -23,11 +117,16 @@ def run_hierarchical_simulation(noise_level=0, num_episodes=20):
     initial_state = Maze.get_initial_player_pos()
 
     # Generate training data by exploring the maze
-    training_data = []
-    for _ in range(50):  # Generate some exploration data
-        state = [np.random.randint(-72, 72), np.random.randint(-72, 72)]
-        training_data.append(state)
-    training_data = np.array(training_data)
+    maze_positions_path = "maze_positions.csv"
+    
+    # Collect maze positions through pre-exploration (will be skipped if file exists)
+    collect_maze_positions(
+        maze_map, player_pos_index, goal_pos_index,
+        exploration_steps=50000, save_path=maze_positions_path
+    )
+    
+    # Load the collected maze positions for training
+    training_data = load_and_prepare_training_data(maze_positions_path)
 
     #initialize the hierarchical agent 
     HGWRSOM_agent = HierarchicalGWRSOMAgent(
@@ -74,7 +173,7 @@ def run_hierarchical_simulation(noise_level=0, num_episodes=20):
         step_counter = 0
         episode_success = False
 
-        while current_state != goal and step_counter < 20000:
+        while current_state != goal and step_counter < 10000:
             step_counter += 1
 
             # Add noise to state observation if noise_level > 0
@@ -104,7 +203,7 @@ def run_hierarchical_simulation(noise_level=0, num_episodes=20):
         if episode_success:
             reached_goal_count += 1
             if reached_goal_count > 10: 
-                HGWRSOM_agent.decay_epsilon(min_epsilon=0.2) 
+                HGWRSOM_agent.decay_epsilon(min_epsilon=0.1) 
 
         training_stats['episodes'].append(episode_num + 1)
         training_stats['steps'].append(step_counter)

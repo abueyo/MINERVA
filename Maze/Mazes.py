@@ -82,8 +82,8 @@ class MazeMaps:
         ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X'], 
     ]
     
-    default_player_pos_index = (1, 1) #row, column
-    default_goal_pos_index = (15, 1) #row, column 
+    # default_player_pos_index = (1, 1) #row, column
+    # default_goal_pos_index = (15, 1) #row, column 
 
     # 20x20 Maze Configuration
     maze_20x20 = [
@@ -111,11 +111,11 @@ class MazeMaps:
         ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X']
     ]
 
-    # default_player_pos_index = (1, 1) #row, column
-    # default_goal_pos_index = (19, 1) #row, column
+    default_player_pos_index = (1, 1) #row, column
+    default_goal_pos_index = (19, 1) #row, column
     
     def get_default_map(): 
-        return MazeMaps.maze_15x15, MazeMaps.default_player_pos_index, MazeMaps.default_goal_pos_index
+        return MazeMaps.maze_20x20, MazeMaps.default_player_pos_index, MazeMaps.default_goal_pos_index
     
 
     def get_default_map_multiple_goals(): 
