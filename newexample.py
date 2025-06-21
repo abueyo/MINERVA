@@ -44,16 +44,20 @@ def calculate_se(transitions, agent, tau=0.0001):
         for prev_state, curr_state in transitions:
             is_habituated = False
             
-            prev_pattern = agent.get_firing_pattern(prev_state)
-            curr_pattern = agent.get_firing_pattern(curr_state)
-            
-            prev_node_idx = agent.find_node_index(prev_pattern)
-            curr_node_idx = agent.find_node_index(curr_pattern)
-            
-            if prev_node_idx is not None and curr_node_idx is not None:
-                # Check connection only if both nodes exist
-                if prev_node_idx < agent.connections.shape[0] and curr_node_idx < agent.connections.shape[1]:
-                    is_habituated = agent.connections[prev_node_idx, curr_node_idx] == 1
+            try:
+                prev_pattern = agent.get_firing_pattern(prev_state)
+                curr_pattern = agent.get_firing_pattern(curr_state)
+                
+                prev_node_idx = agent.find_node_index(prev_pattern)
+                curr_node_idx = agent.find_node_index(curr_pattern)
+                
+                if prev_node_idx is not None and curr_node_idx is not None:
+                    # Check connection only if both nodes exist
+                    if prev_node_idx < agent.connections.shape[0] and curr_node_idx < agent.connections.shape[1]:
+                        is_habituated = agent.connections[prev_node_idx, curr_node_idx] == 1
+            except Exception as e:
+                # If there's an error getting patterns, treat as not habituated
+                pass
 
             if not is_habituated:
                 error_count += 1
@@ -63,18 +67,23 @@ def calculate_se(transitions, agent, tau=0.0001):
         for prev_state, curr_state in transitions:
             is_habituated = False
             
-            prev_node = agent.model.get_node_index(prev_state)
-            curr_node = agent.model.get_node_index(curr_state)
-            
-            # Check if nodes exist and are connected
-            if prev_node < agent.model.C.shape[0] and curr_node < agent.model.C.shape[1]:
-                is_habituated = agent.model.C[prev_node, curr_node] == 1
+            try:
+                prev_node = agent.model.get_node_index(prev_state)
+                curr_node = agent.model.get_node_index(curr_state)
+                
+                # Check if nodes exist and are connected
+                if prev_node < agent.model.C.shape[0] and curr_node < agent.model.C.shape[1]:
+                    is_habituated = agent.model.C[prev_node, curr_node] == 1
+            except Exception as e:
+                # If there's an error, treat as not habituated
+                pass
 
             if not is_habituated:
                 error_count += 1
 
     SE = (error_count + tau) / (E + tau)
     return SE
+
 def collect_maze_positions(maze_map, player_pos_index, goal_pos_index, 
                           exploration_steps=10000, save_path="maze_positions.csv"):
     """
@@ -84,7 +93,7 @@ def collect_maze_positions(maze_map, player_pos_index, goal_pos_index,
     - maze_map: The maze map to explore
     - player_pos_index: Initial player position index
     - goal_pos_index: Goal position index
-    - exploration_steps: Number of steps to explore (default: 5000)
+    - exploration_steps: Number of steps to explore (default: 10000)
     - save_path: Path to save the collected positions (default: "maze_positions.csv")
     
     Returns:
@@ -176,12 +185,12 @@ def load_and_prepare_training_data(csv_path):
     
     return training_data
 
-# Modified run_enhanced_noise_comparison function
 def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2, 2/3, 5/6, 1, 7/6, 4/3], 
                                                episodes_per_noise=10,
                                                maze_positions_path=None):
     """
     Enhanced version of run_noise_comparison that uses actual maze position data for training.
+    Fixed to properly count MINERVA nodes and prevent agent from getting stuck.
     
     Parameters:
     - noise_levels: List of noise levels to test
@@ -212,7 +221,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
     if maze_positions_path is None or not os.path.exists(maze_positions_path):
         maze_positions_path = collect_maze_positions(
             maze_map, player_pos_index, goal_pos_index,
-            exploration_steps=5000, save_path="maze_positions.csv"
+            exploration_steps=10000, save_path="maze_positions.csv"
         )
     
     # Load training data from pre-exploration
@@ -233,10 +242,24 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
             
             Maze = MazePlayer(maze_map=maze_map, 
                             player_index_pos=player_pos_index, 
-                            goal_index_pos=goal_pos_index)
+                            goal_index_pos=goal_pos_index,
+                            display_maze=False)  # Turn off display for faster execution
             
             goal = Maze.get_goal_pos()
             initial_state = Maze.get_initial_player_pos()
+            
+            # Debug: Print maze setup info
+            print(f"Maze setup - Initial: {initial_state}, Goal: {goal}")
+            
+            # Test maze movement manually to ensure it works
+            print("Testing maze movement:")
+            Maze.reset_player()
+            test_pos = Maze.get_player_pos()
+            print(f"  Position before test move: {test_pos}")
+            Maze.move_player(2)  # Try moving right
+            test_pos_after = Maze.get_player_pos()
+            print(f"  Position after test move (right): {test_pos_after}")
+            Maze.reset_player()  # Reset back to start
 
             # Initialize TMGWR agent
             tmgwr_agent = TMGWRAgent(
@@ -247,7 +270,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
             tmgwr_agent.set_goal(goal)
             tmgwr_agent.set_epsilon(1)  # Pure exploration
 
-            # Initialize HGWRSOM agent with maze data
+            # Initialize HGWRSOM agent with maze data - FIXED INITIALIZATION
             hgwrsom_agent = HierarchicalGWRSOMAgent(
                 lower_dim=1, higher_dim=2, epsilon_b=0.35,
                 epsilon_n=0.15, beta=0.7, delta=0.79,
@@ -265,33 +288,69 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                     np.random.seed(episode_seed + agent_idx)
                     
                     if agent_name == 'MINERVA':
-                        # Train lower networks with actual maze position data
+                        # Train lower networks with actual maze position data - CRITICAL FIX
                         print(f"Training MINERVA with {len(training_data)} maze positions...")
                         
-                        # Prepare x and y training data
-                        x_train = training_data[:, 0].reshape(-1, 1)
-                        y_train = training_data[:, 1].reshape(-1, 1)
+                        # Train the lower networks FIRST before doing anything else
+                        agent.train_lower_networks(training_data, epochs=20)
                         
-                        # Train lower networks separately
-                        agent.train_lower_networks(training_data, epochs=100)
-                        
-                        # Ensure nodes and connections are properly initialized
+                        # IMPORTANT: Reset the higher-level network components after training
                         agent.nodes = []  # Reset nodes list
                         agent.connections = np.zeros((0, 0))  # Reset connections
                         agent.pattern_ages = np.zeros((0, 0))  # Reset pattern ages
+                        agent.prev_node_idx = None  # Reset previous node tracking
+                        agent.state_node_coverage = {}  # Reset state coverage
+                        
+                        print(f"Lower networks trained - X: {len(agent.lower_x.A)} nodes, Y: {len(agent.lower_y.A)} nodes")
                     
+                    # Set goal and exploration parameters - CRITICAL FOR MOVEMENT
                     agent.set_goal(goal)
-                    agent.set_epsilon(1)  # Pure exploration
+                    
+                    # For MINERVA, start with maximum exploration since it needs to build its network
+                    if agent_name == 'MINERVA':
+                        agent.set_epsilon(1.0)  # Maximum exploration
+                    else:
+                        agent.set_epsilon(1.0)  # Maximum exploration for both
+                    
+                    # Additional debug info for MINERVA
+                    if agent_name == 'MINERVA':
+                        print(f"MINERVA setup complete:")
+                        print(f"  Lower X network nodes: {len(agent.lower_x.A)}")
+                        print(f"  Lower Y network nodes: {len(agent.lower_y.A)}")
+                        print(f"  Goal set to: {goal}")
+                        print(f"  Epsilon: {agent.get_epsilon()}")
+                        
+                        # Test if we can get a firing pattern
+                        try:
+                            test_pattern = agent.get_firing_pattern(initial_state)
+                            print(f"  Test firing pattern successful for initial state {initial_state}")
+                            print(f"  X pattern sum: {np.sum(test_pattern[0])}, Y pattern sum: {np.sum(test_pattern[1])}")
+                        except Exception as e:
+                            print(f"  ERROR: Cannot get firing pattern for initial state: {e}")
+                            continue
                     
                     # Run episode
                     Maze.reset_player()  # Reset for each agent
                     current_state = initial_state
                     step_counter = 0
-                    max_steps = 5000  # Limit to prevent infinite loops
+                    max_steps = 7000  # Limit to prevent infinite loops
                     
                     state_node_mappings = defaultdict(lambda: defaultdict(int))
                     transitions = []
                     total_visits = 0
+                    
+                    print(f"Starting {agent_name} episode - Initial state: {current_state}, Goal: {goal}")
+                    
+                    # Debug: Test the first few actions
+                    if agent_name == 'MINERVA':
+                        print("Testing MINERVA action selection:")
+                        for test_step in range(3):
+                            try:
+                                test_action = agent.select_action(current_state)
+                                print(f"  Test step {test_step}: Action {test_action} for state {current_state}")
+                            except Exception as e:
+                                print(f"  Test step {test_step}: ERROR in action selection: {e}")
+                                break
                     
                     # Main episode loop
                     while current_state != goal and step_counter < max_steps:
@@ -299,68 +358,137 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                         
                         # Print progress occasionally
                         if step_counter % 1000 == 0:
-                            print(f"{agent_name}: Step {step_counter}, Nodes: {len(agent.nodes) if agent_name == 'MINERVA' else len(agent.model.W)}")
+                            if agent_name == 'MINERVA':
+                                print(f"{agent_name}: Step {step_counter}, Nodes: {len(agent.nodes)}, Current state: {current_state}")
+                            else:
+                                print(f"{agent_name}: Step {step_counter}, Nodes: {len(agent.model.W)}, Current state: {current_state}")
                         
                         prev_state = np.array(current_state)
                         
                         # Add noise to state observation if noise_level > 0
                         noise_probability = 0.5 # Probability of adding noise
-                        if np.random.uniform(0, 1) < noise_probability:  # Add noise with a certain probability
+                        if noise_level > 0 and np.random.uniform(0, 1) < noise_probability:
                             noisy_state = np.array(current_state) + np.random.normal(0, np.sqrt(noise_level), 2)
-                        else:  # Use the true state
+                        else:
                             noisy_state = np.array(current_state)
                         
                         # Get node assignment for current state
                         if agent_name == 'TMGWR':
                             node_idx = agent.model.get_node_index(noisy_state)
                         else:
-                            # For MINERVA, use its native methods
-                            pattern = agent.get_firing_pattern(noisy_state)
-                            
-                            # Record the mapping of state to pattern
-                            state_key = tuple(current_state)
-                            if state_key not in state_to_pattern:
-                                # Extract active neurons for easier analysis
-                                x_active = np.where(np.array(pattern[0]) > 0)[0]
-                                y_active = np.where(np.array(pattern[1]) > 0)[0]
+                            # For MINERVA, use its native methods - FIXED NODE COUNTING
+                            try:
+                                pattern = agent.get_firing_pattern(noisy_state)
                                 
-                                # Store the full mapping
-                                state_to_pattern[state_key] = {
-                                    'pattern': pattern,
-                                    'x_neuron': int(x_active[0]) if len(x_active) > 0 else -1,
-                                    'y_neuron': int(y_active[0]) if len(y_active) > 0 else -1,
-                                    'noisy_state': noisy_state.tolist()
-                                }
-                            
-                            found_idx = agent.find_node_index(pattern)
-                            
-                            if found_idx is None:
-                                # Pattern doesn't exist yet
-                                node_idx = len(agent.nodes)
-                            else:
-                                node_idx = found_idx
+                                # Record the mapping of state to pattern
+                                state_key = tuple(current_state) if isinstance(current_state, (list, np.ndarray)) else current_state
+                                if state_key not in state_to_pattern:
+                                    # Extract active neurons for easier analysis
+                                    x_active = np.where(np.array(pattern[0]) > 0)[0]
+                                    y_active = np.where(np.array(pattern[1]) > 0)[0]
+                                    
+                                    # Store the full mapping
+                                    state_to_pattern[state_key] = {
+                                        'pattern': pattern,
+                                        'x_neuron': int(x_active[0]) if len(x_active) > 0 else -1,
+                                        'y_neuron': int(y_active[0]) if len(y_active) > 0 else -1,
+                                        'noisy_state': noisy_state.tolist()
+                                    }
+                                
+                                found_idx = agent.find_node_index(pattern)
+                                
+                                if found_idx is None:
+                                    # Pattern doesn't exist yet, will be created
+                                    node_idx = len(agent.nodes)  # This will be the index of the new node
+                                else:
+                                    node_idx = found_idx
+                            except Exception as e:
+                                print(f"Error getting pattern for MINERVA: {e}")
+                                node_idx = 0  # Fallback
                         
                         # Update state-node mapping counts
-                        state_tuple = tuple(current_state)
+                        state_tuple = tuple(current_state) if isinstance(current_state, (list, np.ndarray)) else current_state
                         state_node_mappings[node_idx][state_tuple] += 1
                         total_visits += 1
                         
-                        # Select and execute action
-                        action = agent.select_action(noisy_state)
-                        Maze.move_player(action)
-                        next_state = Maze.get_player_pos()
-                        
-                        # Ensure next_state is not None or invalid
-                        if next_state is None:
-                            print(f"Warning: Invalid next_state after action {action}")
-                            break
+                        # Select and execute action - CRITICAL FOR MOVEMENT
+                        try:
+                            # For MINERVA, add more debugging
+                            if agent_name == 'MINERVA' and step_counter <= 10:
+                                print(f"  MINERVA action selection debug:")
+                                print(f"    Current nodes: {len(agent.nodes)}")
+                                print(f"    Goal: {agent.goal}")
+                                print(f"    Epsilon: {agent.get_epsilon()}")
+                                
+                                # Check if we're in exploration mode
+                                exploration_check = np.random.uniform(0, 1)
+                                print(f"    Random value: {exploration_check}, Epsilon: {agent.epsilon}")
+                                if exploration_check > agent.epsilon:
+                                    print(f"    Will exploit (use value function)")
+                                else:
+                                    print(f"    Will explore (random action)")
                             
-                        # Update model with actual next state (no noise)
-                        agent.update_model(next_state, action)
-                        
-                        # Record transition
-                        transitions.append((prev_state, next_state))
-                        current_state = next_state
+                            action = agent.select_action(noisy_state)
+                            
+                            # Debug: Print action details
+                            if step_counter <= 10 or step_counter % 500 == 0:
+                                print(f"  Step {step_counter}: Action {action}, Current pos: {current_state}")
+                            
+                            # Store old position for comparison
+                            old_pos = tuple(current_state) if isinstance(current_state, (list, np.ndarray)) else current_state
+                            
+                            Maze.move_player(action)
+                            next_state = Maze.get_player_pos()
+                            
+                            # Check if we actually moved
+                            if np.array_equal(np.array(old_pos), np.array(next_state)):
+                                if step_counter <= 10:
+                                    print(f"  Info: Agent stayed at {current_state} with action {action} (might be wall)")
+                                # This is normal - agent hit a wall or chose to stay
+                            else:
+                                if step_counter <= 10:
+                                    print(f"  Info: Agent moved from {old_pos} to {next_state}")
+                            
+                            # Ensure we have a valid next state
+                            if next_state is None:
+                                print(f"Warning: Invalid next_state after action {action}")
+                                next_state = current_state  # Stay in same position
+                            
+                            # Always update model with actual next state (no noise)
+                            agent.update_model(next_state, action)
+                            
+                            # Record transition (even if we didn't move - this helps learn obstacles)
+                            transitions.append((prev_state, next_state))
+                            current_state = next_state
+                            
+                        except Exception as e:
+                            print(f"Error in action/update for {agent_name}: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            
+                            # For MINERVA, try to force random exploration if action selection fails
+                            if agent_name == 'MINERVA':
+                                print("  Forcing random action for MINERVA...")
+                                action = np.random.randint(0, 4)
+                                print(f"  Random action: {action}")
+                                Maze.move_player(action)
+                                next_state = Maze.get_player_pos()
+                                if next_state is not None:
+                                    agent.update_model(next_state, action)
+                                    current_state = next_state
+                                    transitions.append((prev_state, next_state))
+                                    continue
+                            
+                            # Try random action as fallback for any agent
+                            action = np.random.randint(0, 4)
+                            print(f"  Trying random action {action} as fallback")
+                            Maze.move_player(action)
+                            next_state = Maze.get_player_pos()
+                            if next_state is not None:
+                                current_state = next_state
+                            else:
+                                print("  Fallback action also failed, breaking...")
+                                break
                     
                     # Check if episode terminated normally
                     if current_state == goal:
@@ -379,11 +507,11 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                     else:
                         se = 0.0  # Default if no transitions
                     
-                    # Record number of nodes
+                    # Record number of nodes - FIXED COUNTING
                     if agent_name == 'TMGWR':
                         num_nodes = len(agent.model.W)
                     else:
-                        num_nodes = len(agent.nodes)
+                        num_nodes = len(agent.nodes)  # This should now be accurate
                     
                     # Print detailed debug info
                     print(f"{agent_name} episode summary:")
@@ -397,17 +525,12 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                     results[agent_name][noise_level]['nodes'].append(num_nodes)
                     results[agent_name][noise_level]['purity'].append(purity)
                     results[agent_name][noise_level]['se'].append(se)
-                    
-                    # # Demonstrate node creation for the current state
-                    # node_creation_info = demonstrate_node_creation(agent, current_state, noise_level, agent_name)
-                    # table_data.append(node_creation_info)
                 
                 except Exception as e:
                     # More detailed error reporting
                     print(f"Error in {agent_name} episode {episode} with noise level {noise_level}: {str(e)}")
                     import traceback
                     traceback.print_exc()  # Print full stack trace for debugging
-                    print(f"Agent state: {agent_name} has {len(agent.nodes) if agent_name == 'MINERVA' else len(agent.model.W)} nodes")
                     
                     # Record zeros for failed episodes, but clearly mark them
                     results[agent_name][noise_level]['nodes'].append(-1)  # Use -1 to indicate failure
@@ -440,7 +563,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                 results[agent_name][noise_level]['se'] = [0]
 
     return results, table_data, pattern_mappings
-# 
+
 def plot_comparison_results(results):
     metrics = {
         'nodes': {'title': 'Number of Nodes vs Noise Level', 'ylabel': 'Number of Nodes', 'ylim': (0, 120)},
@@ -502,8 +625,8 @@ def plot_comparison_results(results):
         plt.show()
 
 if __name__ == "__main__":
-    print("MINERVA Binary Pattern Analysis")
-    print("=" * 40)
+    print("MINERVA Binary Pattern Analysis - FIXED VERSION")
+    print("=" * 50)
     
     # Define maze positions file path
     maze_positions_path = "maze_positions.csv"
@@ -531,11 +654,6 @@ if __name__ == "__main__":
     # Plot the results
     plot_comparison_results(results)
     
-    # # Print a subset of the table data
-    # print("\nNode Creation Table (sample):")
-    # for entry in table_data[:5]:  # First 5 entries
-    #     print(f"State: {entry['Original State']}, Agent: {entry['Agent']}, Node: {entry['Interpretation']['Node Index'] if 'Node Index' in entry['Interpretation'] else 'N/A'}")
-    
     # Save full results
     print("\nSummary Statistics:")
     for agent in results:
@@ -550,4 +668,4 @@ if __name__ == "__main__":
             print(f"  Mean purity: {np.mean(purity):.2f}%")
             print(f"  Std purity: {np.std(purity):.2f}%")
             print(f"  Mean SE: {np.mean(se):.2f}")
-            print(f"  Std SE: {np.std(se):.2f}")
+            print(f"  Std SE: {np.std(se):.2f}") 

@@ -18,7 +18,7 @@ class TMGWRAgent:
 
     def train(self, x, a):
         x = np.array(x)  # Ensure x is a NumPy array
-        # print(f"Training with input x shape: {x.shape}")
+        print(f"Training with input x shape: {x.shape}")
         # Convert the action from integer to array
         encoded_action = self.get_onehot_encoded_action(a)
         # Train the model
@@ -385,8 +385,8 @@ class MapBuilder:
 
     def train(self, x, a):                                                    
         x = np.array(x)  # Ensure x is a NumPy array
-        # print(f"MapBuilder Training with input x shape: {x.shape}")
-        # print(f"MapBuilder Current W shape: {self.W.shape}")
+        print(f"MapBuilder Training with input x shape: {x.shape}")
+        print(f"MapBuilder Current W shape: {self.W.shape}")
         
         # Calculate the distances between the current state x and all weight vectors in self.W
         Dis_xw = [self.Distance(x, w) for w in self.W]

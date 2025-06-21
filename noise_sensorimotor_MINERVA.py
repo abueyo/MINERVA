@@ -122,7 +122,7 @@ def run_hierarchical_simulation(noise_level=0, num_episodes=15):
     # Collect maze positions through pre-exploration (will be skipped if file exists)
     collect_maze_positions(
         maze_map, player_pos_index, goal_pos_index,
-        exploration_steps=50000, save_path=maze_positions_path
+        exploration_steps=5000, save_path=maze_positions_path
     )
     
     # Load the collected maze positions for training

@@ -44,7 +44,7 @@ def run_experiment(noise_level=0, num_episodes=5):
         step_counter = 0
         episode_success = False
 
-        while current_state != goal and step_counter < 20000: 
+        while current_state != goal and step_counter < 700: 
             step_counter += 1
 
             # Add noise to state observation if noise_level > 0
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     np.random.seed(42)
     
     # Set number of episodes
-    num_episodes = 20
+    num_episodes = 5
 
     # Run without noise
     print("\nRunning experiment without noise...")

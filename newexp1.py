@@ -75,8 +75,9 @@ def calculate_se(transitions, agent, tau=0.0001):
 
     SE = (error_count + tau) / (E + tau)
     return SE
+
 def collect_maze_positions(maze_map, player_pos_index, goal_pos_index, 
-                          exploration_steps=10000, save_path="maze_positions.csv"):
+                          exploration_steps=15000, save_path="maze_positions.csv"):
     """
     Perform pre-exploration to collect positional data from the maze environment.
     
@@ -176,12 +177,33 @@ def load_and_prepare_training_data(csv_path):
     
     return training_data
 
-# Modified run_enhanced_noise_comparison function
+def get_network_stats(agent, agent_name):
+    """
+    Get network statistics for both TMGWR and MINERVA agents
+    Uses the proper counting method from newexp.py for MINERVA
+    """
+    if agent_name == 'TMGWR':
+        return {
+            'lower_x_nodes': 0,  # TMGWR doesn't have separate lower networks
+            'lower_y_nodes': 0,
+            'higher_nodes': len(agent.model.W),
+            'higher_connections': int(np.sum(agent.model.C)) if hasattr(agent.model, 'C') else 0
+        }
+    else:  # MINERVA
+        return {
+            'lower_x_nodes': len(agent.lower_x.A) if hasattr(agent.lower_x, 'A') else 0,
+            'lower_y_nodes': len(agent.lower_y.A) if hasattr(agent.lower_y, 'A') else 0,
+            'higher_nodes': len(agent.nodes),  # This is the key fix from newexp.py
+            'higher_connections': int(np.sum(agent.connections)) if hasattr(agent, 'connections') else 0
+        }
+
+# Modified run_enhanced_noise_comparison function with proper node counting
 def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2, 2/3, 5/6, 1, 7/6, 4/3], 
-                                               episodes_per_noise=10,
+                                               episodes_per_noise=2,
                                                maze_positions_path=None):
     """
-    Enhanced version of run_noise_comparison that uses actual maze position data for training.
+    Enhanced version of run_noise_comparison that uses actual maze position data for training
+    and proper node counting from newexp.py.
     
     Parameters:
     - noise_levels: List of noise levels to test
@@ -195,8 +217,8 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
     """
         
     results = {
-        'TMGWR': {level: {'nodes': [], 'purity': [], 'se': []} for level in noise_levels},
-        'MINERVA': {level: {'nodes': [], 'purity': [], 'se': []} for level in noise_levels}
+        'TMGWR': {level: {'nodes': [], 'purity': [], 'se': [], 'lower_x_nodes': [], 'lower_y_nodes': [], 'higher_nodes': [], 'higher_connections': []} for level in noise_levels},
+        'MINERVA': {level: {'nodes': [], 'purity': [], 'se': [], 'lower_x_nodes': [], 'lower_y_nodes': [], 'higher_nodes': [], 'higher_connections': []} for level in noise_levels}
     }
     
     # Enhanced to store pattern mappings
@@ -212,7 +234,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
     if maze_positions_path is None or not os.path.exists(maze_positions_path):
         maze_positions_path = collect_maze_positions(
             maze_map, player_pos_index, goal_pos_index,
-            exploration_steps=5000, save_path="maze_positions.csv"
+            exploration_steps=6000, save_path="maze_positions.csv"
         )
     
     # Load training data from pre-exploration
@@ -268,17 +290,17 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                         # Train lower networks with actual maze position data
                         print(f"Training MINERVA with {len(training_data)} maze positions...")
                         
-                        # Prepare x and y training data
-                        x_train = training_data[:, 0].reshape(-1, 1)
-                        y_train = training_data[:, 1].reshape(-1, 1)
+                        # Train lower networks using the method from newexp.py
+                        agent.train_lower_networks(training_data, epochs=20)  # Reduced epochs for efficiency
                         
-                        # Train lower networks separately
-                        agent.train_lower_networks(training_data, epochs=100)
-                        
-                        # Ensure nodes and connections are properly initialized
-                        agent.nodes = []  # Reset nodes list
-                        agent.connections = np.zeros((0, 0))  # Reset connections
-                        agent.pattern_ages = np.zeros((0, 0))  # Reset pattern ages
+                        # Ensure higher-level network is properly initialized
+                        # This is crucial for proper node counting
+                        if not hasattr(agent, 'nodes'):
+                            agent.nodes = []
+                        if not hasattr(agent, 'connections'):
+                            agent.connections = np.zeros((0, 0))
+                        if not hasattr(agent, 'pattern_ages'):
+                            agent.pattern_ages = np.zeros((0, 0))
                     
                     agent.set_goal(goal)
                     agent.set_epsilon(1)  # Pure exploration
@@ -287,7 +309,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                     Maze.reset_player()  # Reset for each agent
                     current_state = initial_state
                     step_counter = 0
-                    max_steps = 5000  # Limit to prevent infinite loops
+                    max_steps = 2000  # Limit to prevent infinite loops
                     
                     state_node_mappings = defaultdict(lambda: defaultdict(int))
                     transitions = []
@@ -297,9 +319,10 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                     while current_state != goal and step_counter < max_steps:
                         step_counter += 1
                         
-                        # Print progress occasionally
+                        # Print progress occasionally with proper node counting
                         if step_counter % 1000 == 0:
-                            print(f"{agent_name}: Step {step_counter}, Nodes: {len(agent.nodes) if agent_name == 'MINERVA' else len(agent.model.W)}")
+                            network_stats = get_network_stats(agent, agent_name)
+                            print(f"{agent_name}: Step {step_counter}, Higher Nodes: {network_stats['higher_nodes']}")
                         
                         prev_state = np.array(current_state)
                         
@@ -314,7 +337,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                         if agent_name == 'TMGWR':
                             node_idx = agent.model.get_node_index(noisy_state)
                         else:
-                            # For MINERVA, use its native methods
+                            # For MINERVA, use its native methods with proper node tracking
                             pattern = agent.get_firing_pattern(noisy_state)
                             
                             # Record the mapping of state to pattern
@@ -335,7 +358,7 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                             found_idx = agent.find_node_index(pattern)
                             
                             if found_idx is None:
-                                # Pattern doesn't exist yet
+                                # Pattern doesn't exist yet, will be assigned next node index
                                 node_idx = len(agent.nodes)
                             else:
                                 node_idx = found_idx
@@ -362,11 +385,11 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                         transitions.append((prev_state, next_state))
                         current_state = next_state
                     
-                    # Check if episode terminated normally
-                    if current_state == goal:
-                        print(f"{agent_name} reached goal in {step_counter} steps")
-                    else:
-                        print(f"{agent_name} did not reach goal, stopped after {step_counter} steps")
+                    # # Check if episode terminated normally
+                    # if current_state == goal:
+                    #     print(f"{agent_name} reached goal in {step_counter} steps")
+                    # else:
+                    #     print(f"{agent_name} did not reach goal, stopped after {step_counter} steps")
                     
                     # Calculate metrics
                     if total_visits > 0:
@@ -379,40 +402,53 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
                     else:
                         se = 0.0  # Default if no transitions
                     
-                    # Record number of nodes
-                    if agent_name == 'TMGWR':
-                        num_nodes = len(agent.model.W)
-                    else:
-                        num_nodes = len(agent.nodes)
+                    # Get proper network statistics using the method from newexp.py
+                    network_stats = get_network_stats(agent, agent_name)
                     
-                    # Print detailed debug info
-                    print(f"{agent_name} episode summary:")
-                    print(f"  Nodes: {num_nodes}")
-                    print(f"  Purity: {purity:.2f}%")
-                    print(f"  SE: {se:.4f}")
-                    print(f"  Total states visited: {total_visits}")
-                    print(f"  Transitions recorded: {len(transitions)}")
+                    # For backward compatibility, also record total nodes
+                    total_nodes = network_stats['higher_nodes']
                     
-                    # Store results
-                    results[agent_name][noise_level]['nodes'].append(num_nodes)
+                    # # Print detailed debug info
+                    # print(f"{agent_name} episode summary:")
+                    # print(f"  Lower X Nodes: {network_stats['lower_x_nodes']}")
+                    # print(f"  Lower Y Nodes: {network_stats['lower_y_nodes']}")
+                    # print(f"  Higher Nodes: {network_stats['higher_nodes']}")
+                    # print(f"  Higher Connections: {network_stats['higher_connections']}")
+                    # print(f"  Purity: {purity:.2f}%")
+                    # print(f"  SE: {se:.4f}")
+                    # print(f"  Total states visited: {total_visits}")
+                    # print(f"  Transitions recorded: {len(transitions)}")
+                    
+                    # Store results with detailed network statistics
+                    results[agent_name][noise_level]['nodes'].append(total_nodes)
                     results[agent_name][noise_level]['purity'].append(purity)
                     results[agent_name][noise_level]['se'].append(se)
-                    
-                    # # Demonstrate node creation for the current state
-                    # node_creation_info = demonstrate_node_creation(agent, current_state, noise_level, agent_name)
-                    # table_data.append(node_creation_info)
+                    results[agent_name][noise_level]['lower_x_nodes'].append(network_stats['lower_x_nodes'])
+                    results[agent_name][noise_level]['lower_y_nodes'].append(network_stats['lower_y_nodes'])
+                    results[agent_name][noise_level]['higher_nodes'].append(network_stats['higher_nodes'])
+                    results[agent_name][noise_level]['higher_connections'].append(network_stats['higher_connections'])
                 
                 except Exception as e:
                     # More detailed error reporting
                     print(f"Error in {agent_name} episode {episode} with noise level {noise_level}: {str(e)}")
                     import traceback
                     traceback.print_exc()  # Print full stack trace for debugging
-                    print(f"Agent state: {agent_name} has {len(agent.nodes) if agent_name == 'MINERVA' else len(agent.model.W)} nodes")
+                    
+                    # Get network stats for error reporting
+                    try:
+                        network_stats = get_network_stats(agent, agent_name)
+                        print(f"Agent state: {agent_name} has {network_stats['higher_nodes']} higher nodes")
+                    except:
+                        print(f"Could not get network stats for {agent_name}")
                     
                     # Record zeros for failed episodes, but clearly mark them
                     results[agent_name][noise_level]['nodes'].append(-1)  # Use -1 to indicate failure
                     results[agent_name][noise_level]['purity'].append(0)
                     results[agent_name][noise_level]['se'].append(0)
+                    results[agent_name][noise_level]['lower_x_nodes'].append(0)
+                    results[agent_name][noise_level]['lower_y_nodes'].append(0)
+                    results[agent_name][noise_level]['higher_nodes'].append(-1)
+                    results[agent_name][noise_level]['higher_connections'].append(0)
             
             # Store the pattern mappings for this episode
             if state_to_pattern:
@@ -430,22 +466,25 @@ def run_enhanced_noise_comparison_with_maze_data(noise_levels=[0, 1/6, 1/3, 1/2,
             valid_indices = [i for i, n in enumerate(results[agent_name][noise_level]['nodes']) if n >= 0]
             
             if valid_nodes:
-                results[agent_name][noise_level]['nodes'] = valid_nodes
-                results[agent_name][noise_level]['purity'] = [results[agent_name][noise_level]['purity'][i] for i in valid_indices]
-                results[agent_name][noise_level]['se'] = [results[agent_name][noise_level]['se'][i] for i in valid_indices]
+                # Keep only valid episodes for all metrics
+                for metric in results[agent_name][noise_level]:
+                    results[agent_name][noise_level][metric] = [results[agent_name][noise_level][metric][i] for i in valid_indices]
             else:
                 # If all episodes failed, keep one zero entry for reporting
-                results[agent_name][noise_level]['nodes'] = [0]
-                results[agent_name][noise_level]['purity'] = [0]
-                results[agent_name][noise_level]['se'] = [0]
+                for metric in results[agent_name][noise_level]:
+                    if metric in ['nodes', 'higher_nodes']:
+                        results[agent_name][noise_level][metric] = [0]
+                    else:
+                        results[agent_name][noise_level][metric] = [0]
 
     return results, table_data, pattern_mappings
-# 
+
 def plot_comparison_results(results):
+    """Plot comparison results with enhanced network statistics and colored boxplot elements."""
     metrics = {
-        'nodes': {'title': 'Number of Nodes vs Noise Level', 'ylabel': 'Number of Nodes', 'ylim': (0, 120)},
-        'purity': {'title': 'Purity vs Noise Level', 'ylabel': 'Purity (%)', 'ylim': (70, 102)},
-        'se': {'title': 'Sensorimotor Error vs Noise Level', 'ylabel': 'SE', 'ylim': (0, 0.1)}
+        'nodes': {'title': 'Total Nodes vs Noise Level', 'ylabel': 'Total Nodes', 'ylim': (38, 41)},
+        'purity': {'title': 'Purity vs Noise Level', 'ylabel': 'Purity (%)', 'ylim': (99, 100.2)},
+        'se': {'title': 'Sensorimotor Error vs Noise Level', 'ylabel': 'SE', 'ylim': (0, 0.08)}
     }
     
     # Manual mapping for our specific noise levels
@@ -462,6 +501,9 @@ def plot_comparison_results(results):
     }
     
     for metric in metrics:
+        if metric not in results['TMGWR'][list(results['TMGWR'].keys())[0]]:
+            continue  # Skip metrics that don't exist
+            
         data = []
         for agent in results:
             for noise_level in results[agent]:
@@ -470,46 +512,124 @@ def plot_comparison_results(results):
                     data.append({
                         'Agent': agent,
                         'Noise Level': fraction_mapping[noise_level],
-                        'Value': value,
-                        'Metric': metrics[metric]['ylabel'],
-                        'Noise_sort': noise_level
+                        'Noise_sort': noise_level,
+                        'Value': value
                     })
         
         df = pd.DataFrame(data)
         df = df.sort_values('Noise_sort')
         
         plt.figure(figsize=(15, 8))
-        
-        # Add grid before the plot
-        plt.grid(True, linestyle='--', alpha=0.7)
-        
-        custom_palette = {'TMGWR': 'green', 'MINERVA': 'orange'}
-        sns.boxplot(data=df, x='Noise Level', y='Value', hue='Agent', palette=custom_palette)
-        
-        # Ensure grid is behind the plot
         plt.grid(True, linestyle='--', alpha=0.7, zorder=0)
+        
+        # Custom colors
+        colors = {'TMGWR': 'green', 'MINERVA': 'orange'}
+        
+        # Get unique noise levels and agents
+        noise_levels = sorted(df['Noise_sort'].unique())
+        agents = df['Agent'].unique()
+        
+        # Prepare data for boxplot
+        all_data = []
+        labels = []
+        box_colors = []
+        
+        for i, noise_level in enumerate(noise_levels):
+            noise_label = fraction_mapping[noise_level]
+            for j, agent in enumerate(agents):
+                agent_data = df[(df['Agent'] == agent) & (df['Noise_sort'] == noise_level)]['Value'].values
+                if len(agent_data) > 0:
+                    all_data.append(agent_data)
+                    labels.append(f"{noise_label}")
+                    box_colors.append(colors[agent])
+        
+        # Create positions for the boxes with reduced spacing between both algorithms and noise levels
+        n_noise = len(noise_levels)
+        n_agents = len(agents)
+        positions = []
+        group_spacing = 2.8  # Reduced spacing between noise level groups
+        for i in range(n_noise):
+            for j in range(n_agents):
+                positions.append(i * group_spacing + j * 0.8)  # 0.8 spacing between algorithms
+        
+        # Create the boxplot with matplotlib for full color control
+        bp = plt.boxplot(all_data, positions=positions, patch_artist=True, 
+                        widths=0.6, zorder=1)  # Slightly wider boxes to compensate
+        
+        # Color all elements consistently
+        for i, (patch, color) in enumerate(zip(bp['boxes'], box_colors)):
+            # Box face and edge
+            patch.set_facecolor(color)
+            patch.set_edgecolor(color)
+            
+            # Whiskers
+            bp['whiskers'][i*2].set_color(color)
+            bp['whiskers'][i*2+1].set_color(color)
+            
+            # Caps
+            bp['caps'][i*2].set_color(color)
+            bp['caps'][i*2+1].set_color(color)
+            
+            # Median
+            bp['medians'][i].set_color(color)
+            
+            # Outliers (fliers)
+            bp['fliers'][i].set_markerfacecolor(color)
+            bp['fliers'][i].set_markeredgecolor(color)
+            bp['fliers'][i].set_alpha(0.7)
+        
+        # Set x-axis labels with reduced spacing
+        noise_labels = [fraction_mapping[level] for level in noise_levels]
+        plt.xticks([i * (n_agents + 0.2) + (n_agents - 1) / 2 for i in range(n_noise)], 
+                  noise_labels, rotation=45)
+        
+        # Create legend
+        legend_elements = [plt.Rectangle((0,0),1,1, facecolor=colors[agent], label=agent) 
+                          for agent in agents]
+        plt.legend(handles=legend_elements, title='Agent Type', title_fontsize=12, 
+                  fontsize=10, loc='upper right')
         
         plt.title(metrics[metric]['title'], fontsize=14, pad=20)
         plt.xlabel('Noise Level (σ²)', fontsize=12)
         plt.ylabel(metrics[metric]['ylabel'], fontsize=12)
-        plt.legend(title='Agent Type', title_fontsize=12, fontsize=10)
         
         if metrics[metric]['ylim']:
             plt.ylim(metrics[metric]['ylim'])
         
-        plt.xticks(rotation=45)
         plt.tight_layout()
         plt.show()
 
+def print_detailed_summary(results):
+    """Print detailed summary with network statistics"""
+    print("\nDetailed Summary Statistics:")
+    for agent in results:
+        print(f"\n{agent}:")
+        for noise_level in results[agent]:
+            print(f"  Noise Level σ² = {noise_level}:")
+            
+            # Print statistics for each metric
+            for metric in ['nodes', 'higher_nodes', 'lower_x_nodes', 'lower_y_nodes', 'higher_connections', 'purity', 'se']:
+                if metric in results[agent][noise_level]:
+                    values = results[agent][noise_level][metric]
+                    if values:
+                        mean_val = np.mean(values)
+                        std_val = np.std(values)
+                        if metric in ['purity']:
+                            print(f"    Mean {metric}: {mean_val:.2f}% (±{std_val:.2f}%)")
+                        elif metric in ['se']:
+                            print(f"    Mean {metric}: {mean_val:.4f} (±{std_val:.4f})")
+                        else:
+                            print(f"    Mean {metric}: {mean_val:.2f} (±{std_val:.2f})")
+
 if __name__ == "__main__":
-    print("MINERVA Binary Pattern Analysis")
-    print("=" * 40)
+    print("MINERVA Binary Pattern Analysis - Corrected Version")
+    print("=" * 50)
     
     # Define maze positions file path
     maze_positions_path = "maze_positions.csv"
        
     # Now run the enhanced comparison using maze positions
-    print("\n3. Running enhanced noise comparison with maze positions...")
+    print("\nRunning enhanced noise comparison with proper node counting...")
     
     # Get maze details for pre-exploration
     from Maze.Mazes import MazeMaps
@@ -523,31 +643,22 @@ if __name__ == "__main__":
     
     # Run the enhanced comparison with collected maze positions
     results, table_data, pattern_mappings = run_enhanced_noise_comparison_with_maze_data(
-        noise_levels=[0, 1/6, 1/3, 1/2, 2/3, 5/6, 1, 7/6, 4/3],
-        episodes_per_noise=3,
+        noise_levels=[0, 1/3, 2/3, 1, 4/3],
+        episodes_per_noise=2,
         maze_positions_path=maze_positions_path
     )
     
     # Plot the results
     plot_comparison_results(results)
     
-    # # Print a subset of the table data
-    # print("\nNode Creation Table (sample):")
-    # for entry in table_data[:5]:  # First 5 entries
-    #     print(f"State: {entry['Original State']}, Agent: {entry['Agent']}, Node: {entry['Interpretation']['Node Index'] if 'Node Index' in entry['Interpretation'] else 'N/A'}")
+    # Print detailed summary with network statistics
+    print_detailed_summary(results)
     
-    # Save full results
-    print("\nSummary Statistics:")
-    for agent in results:
-        print(f"\n{agent}:")
-        for noise_level in results[agent]:
-            nodes = results[agent][noise_level]['nodes']
-            purity = results[agent][noise_level]['purity']
-            se = results[agent][noise_level]['se']
-            print(f"Noise Level σ² = {noise_level}:")
-            print(f"  Mean nodes: {np.mean(nodes):.2f}")
-            print(f"  Std nodes: {np.std(nodes):.2f}")
-            print(f"  Mean purity: {np.mean(purity):.2f}%")
-            print(f"  Std purity: {np.std(purity):.2f}%")
-            print(f"  Mean SE: {np.mean(se):.2f}")
-            print(f"  Std SE: {np.std(se):.2f}")
+    # Save enhanced results
+    with open("enhanced_results_with_network_stats.pkl", "wb") as f:
+        pickle.dump({
+            'results': results,
+            'pattern_mappings': pattern_mappings
+        }, f)
+    
+    print("\nEnhanced results with proper node counting saved!")

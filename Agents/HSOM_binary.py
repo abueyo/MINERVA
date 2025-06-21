@@ -5,95 +5,242 @@ import logging
 import matplotlib.pyplot as plt
 import time
 
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class GWRSOM:
-    # GWRSOM implementation remains the same
-    # ... (same as previous implementation)
-    def __init__(self, a=0.1, h=0.1, en=0.05, es=0.2, an=1.05, ab=1.05, h0=0.5, tb=3.33, tn=14.3, S=1):
-        self.a = a
-        self.h = h
-        self.es = es
-        self.en = en
-        self.an = an
-        self.ab = ab
-        self.h0 = h0
-        self.tb = tb
-        self.tn = tn
-        self.S = S
-        self.t = 1  # Timestep
-        self.A = None  # Node matrix A
-        self.connections = None
-        self.ages = None
-        self.errors = None
-        self.firing_vector = None
-        self.max_age = 50  # Added max_age parameter
-        self.sigma = 0.3  # Neighbourhood width for topological preservation
+    """
+    Growing When Required Self-Organizing Map (GWRSOM) implementation
+    Based on the algorithm in 'A self-organising network that grows when required'
+    with improved stability and topological preservation
+    """
+    def __init__(self, a=0.1, h=0.1, en=0.05, es=0.2, an=1.05, ab=1.05, h0=1.0, tb=3.33, tn=14.3, S=0.3):
+        """
+        Initialize GWRSOM with parameters
+        
+        Parameters:
+        a: Activity threshold (lower values create fewer nodes)
+        h: Firing threshold (higher values allow more nodes)
+        en: Neighbor learning rate
+        es: Winner learning rate
+        an: Firing curve parameter for neighbors
+        ab: Firing curve parameter for winner
+        h0: Initial firing value
+        tb: Time constant for winner
+        tn: Time constant for neighbors
+        S: Stimulus strength
+        """
+        self.a = a              # Activity threshold
+        self.h = h              # Firing threshold
+        self.es = es            # Winner learning rate
+        self.en = en            # Neighbor learning rate
+        self.an = an            # Firing curve parameter for neighbors
+        self.ab = ab            # Firing curve parameter for winner
+        self.h0 = h0            # Initial firing value
+        self.tb = tb            # Time constant for winner
+        self.tn = tn            # Time constant for neighbors
+        self.S = S              # Stimulus strength
+        self.t = 1              # Timestep
+        
+        # These will be initialized later when we see data
+        self.A = None           # Node matrix A (weight vectors)
+        self.connections = None # Connection matrix
+        self.ages = None        # Age of connections
+        self.errors = None      # Error per node
+        self.firing_vector = None # Firing counter for each node
+        
+        # Parameters for network management
+        self.max_age = 50       # Maximum age of connections
+        self.sigma = 0.3        # Neighborhood width for topological preservation
+        
+        # Debug flag
+        self.debug = False
    
     def Distance(self, x1, x2):
         """Calculate Euclidean distance between two vectors"""
         return np.linalg.norm(x1 - x2)
    
     def initialize(self, X):
-        # Create weight vectors for initial nodes - initialization step 1
+        """
+        Initialize the network with two random nodes from input data
+        
+        Parameters:
+        X: Input data [samples, features]
+        """
+        # Ensure data is float type
         X = X.astype(float)
-        w1 = np.round(X[np.random.randint(X.shape[0])])
-        w2 = np.round(X[np.random.randint(X.shape[0])])
-        # Node matrix A
+        unique_X = np.unique(X, axis=0)
+        # pick two random points
+        if len(unique_X) >= 2:
+            indices = np.random.choice(len(unique_X), 2, replace=False)
+            w1 = unique_X[indices[0]] 
+            w2 = unique_X[indices[1]] 
+        else:
+            raise ValueError("Not enough unique data points to initialize network.") 
+        # Initialize node matrix with the two weights
         self.A = np.array([w1, w2])
-        # Only 2 nodes available at the beginning
-        self.connections = np.zeros((2, 2))  # Matrix nxn (n=|nodes|) of 0,1 to indicate connection - initialization step 2
-        self.ages = np.zeros((2, 2))
-        self.errors = np.zeros(2)
-        self.firing_vector = np.ones(2)
+        
+          
+        
+        
+        # Initialize connection matrices
+        self.connections = np.zeros((2, 2))  # No initial connections
+        self.ages = np.zeros((2, 2))         # Ages of connections
+        self.errors = np.zeros(2)            # Error tracking per node
+        self.firing_vector = np.ones(2)      # Initial firing is 1 for all nodes
+        
+        if self.debug:
+            logger.info(f"Initialized network with 2 nodes: {w1} and {w2}")
 
     def find_best_matching_units(self, x):
-        x = x.astype(float)                                       
+        x = x.astype(float)
+
+        if self.A is None or len(self.A) == 0:
+            raise ValueError("No nodes in the network.")
+
         distances = np.linalg.norm(self.A - x, axis=1)
-        return np.argsort(distances)[:2]
+
+        bmu_indices = np.argsort(distances)
+
+        if len(bmu_indices) == 0:
+            return [0, 0]  # fallback case — should rarely happen
+        elif len(bmu_indices) == 1:
+            return [int(bmu_indices[0]), int(bmu_indices[0])]
+        else:
+            return [int(bmu_indices[0]), int(bmu_indices[1])]
+
+
 
     def _create_connection(self, b, s):
+        """
+        Create or reset connection between two nodes
+        
+        Parameters:
+        b: Index of first node
+        s: Index of second node
+        """
         if self.connections[b, s] and self.connections[s, b]:
+            # Connection already exists, reset age
             self.ages[b, s] = 0
             self.ages[s, b] = 0
         else:
+            # Create new connection
             self.connections[b, s] = 1
             self.connections[s, b] = 1
+            self.ages[b, s] = 0
+            self.ages[s, b] = 0
 
     def _below_activity(self, x, b):
+        """
+        Check if activity (similarity) between input and BMU is below threshold
+        
+        Parameters:
+        x: Input vector
+        b: Index of best matching unit
+        
+        Returns:
+        True if activity is below threshold (node is far from input)
+        """
         w_b = self.A[b]
-        activity = np.exp(-np.linalg.norm(x - w_b))
-        return activity < self.a
+        distance = np.linalg.norm(x - w_b)
+        activity = np.exp(-distance)  # Higher = more similar
+         
+        # # Add debug print
+        # print(f"Input: {x}, Node: {w_b}, Distance: {distance:.4f}, Activity: {activity:.6f}, Threshold: {self.a:.6f}")
+        # print(f"Is activity below threshold? {activity < self.a}")
+        return activity < self.a  # True if activity is low (node is far)
 
     def _below_firing(self, b):
-        return self.firing_vector[b] < self.h
+        """
+        Check if firing rate of BMU is below threshold
+        
+        Parameters:
+        b: Index of best matching unit
+        
+        Returns:
+        True if firing rate is below threshold
+        """
+        
+        value = self.firing_vector[b] < self.h
+        # print(f"Node {b} firing: {self.firing_vector[b]:.4f}, threshold: {self.h:.4f}, below? {value}")
+        return value
+    
+    def _calculate_activity(self, x, b):
+        w_b = self.A[b]
+        distance = np.linalg.norm(x - w_b)
+        activity = np.exp(-distance)
+        return activity
+
+    def _should_add_node(self, x, b1):
+        activity = self._calculate_activity(x, b1)
+        firing = self.firing_vector[b1]
+        
+        # Add node if:
+        # 1. Activity is low (input is poorly represented) AND
+        # 2. Firing is high (node hasn't been updated much)
+        return (activity < self.a) and (firing > self.h)
 
     def _add_new_node(self, b1, b2, x):
+        """
+        Add a new node between best matching unit and input
+        
+        Parameters:
+        b1: Index of best matching unit
+        b2: Index of second best matching unit
+        x: Input vector
+        """
+        if self.debug:
+            logger.info(f"Adding new node between node {b1} and input {x}")
+            
+        # Calculate new node's weight vector
         w_b1 = self.A[b1]
-        weight_vector = np.round(w_b1 + x) / 2
+        weight_vector = x.copy()
+        
+        # Add new node to weight matrix
         self.A = np.vstack((self.A, weight_vector))
+        
+        # Get new node's index
         n = self.A.shape[0]
+        
+        # Expand connection matrices using np.pad (more efficient than stacking)
         self.connections = np.pad(self.connections, ((0, 1), (0, 1)))
         self.ages = np.pad(self.ages, ((0, 1), (0, 1)))
+        
+        # Initialize firing and error for new node
         self.firing_vector = np.append(self.firing_vector, 1)
         self.errors = np.append(self.errors, 0)
 
+        # Create connections from new node to BMUs
         self._create_connection(b1, n - 1)
         self._create_connection(b2, n - 1)
+        
+        # Remove connection between BMUs (they're now connected through the new node)
         self.connections[b1, b2] = 0
         self.connections[b2, b1] = 0
 
+        # Remove old edges
         self.remove_old_edges()
+        
+        if self.debug:
+            logger.info(f"New node created at index {n-1} with weight {weight_vector}")
 
     def remove_old_edges(self):
+        """
+        Remove connections older than max_age and any resulting isolated nodes
+        """
+        # Remove old connections
         self.connections[self.ages > self.max_age] = 0
         self.ages[self.ages > self.max_age] = 0
+        
+        # Find isolated nodes (nodes with no connections)
         nNeighbour = np.sum(self.connections, axis=0)
         NodeIndisces = np.array(list(range(self.A.shape[0])))
         AloneNodes = NodeIndisces[np.where(nNeighbour == 0)]
-        if AloneNodes.any() and self.A.shape[0] > 2:  # Ensure we keep at least 2 nodes
+        
+        # Remove isolated nodes if there are more than 2 nodes total
+        if AloneNodes.any() and self.A.shape[0] > 2:
             self.connections = np.delete(self.connections, AloneNodes, axis=0)
             self.connections = np.delete(self.connections, AloneNodes, axis=1)
             self.ages = np.delete(self.ages, AloneNodes, axis=0)
@@ -101,160 +248,340 @@ class GWRSOM:
             self.A = np.delete(self.A, AloneNodes, axis=0)
             self.firing_vector = np.delete(self.firing_vector, AloneNodes)
             self.errors = np.delete(self.errors, AloneNodes)
+            
+            if self.debug:
+                logger.info(f"Removed {len(AloneNodes)} isolated nodes")
 
     def _best(self, x):
+        """
+        Find best matching units and create connection between them
+        
+        Parameters:
+        x: Input vector
+        
+        Returns:
+        Indices of two best matching units
+        """
+        # Find two closest nodes
         b1, b2 = self.find_best_matching_units(x)
+        
+        # Create or reset connection between them
         self._create_connection(b1, b2)
+        
         return b1, b2
 
     def _get_neighbours(self, w):
+        """
+        Get boolean mask of neighbors connected to node w
+        
+        Parameters:
+        w: Index of node
+        
+        Returns:
+        Boolean array with True at indices of neighbors
+        """
         return self.connections[w, :].astype(bool)
 
     def _adapt(self, w, x):
+        """
+        Adapt winner node and its neighbors toward input
+        
+        Parameters:
+        w: Index of winner node
+        x: Input vector
+        """
+        # Ensure input is float
         x = x.astype(float)
+        
+        # Get current weight of winner
         weight_vector = self.A[w]
+        
+        # Calculate winner adaptation based on firing rate
         hs = self.firing_vector[w]
-        # Calculate update
         delta = self.es * hs * (x - weight_vector)
         new_position = weight_vector + delta
-        self.A[w] = np.round(new_position)
         
-        # Round to maintain discrete positions
+        # Update winner node with rounding for discrete positions
+        self.A[w] = (new_position)
+        
+        # Get neighbors
         b_neighbours = self._get_neighbours(w)
-        w_neighbours = self.A[b_neighbours]
-        hi = self.firing_vector[b_neighbours]
+        
+        # Only update neighbors if there are any
+        if np.any(b_neighbours):
+            # Get weights and firing rates of neighbors
+            w_neighbours = self.A[b_neighbours]
+            hi = self.firing_vector[b_neighbours]
 
-        # Calculate neighborhood influence
-        distances = np.array([self.Distance(self.A[w], neighbor) for neighbor in w_neighbours])
-        influences = np.exp(-distances**2 / (2 * self.sigma**2))
+            # Calculate topological neighborhood influence
+            distances = np.array([self.Distance(self.A[w], neighbor) for neighbor in w_neighbours])
+            influences = np.exp(-distances**2 / (2 * self.sigma**2))
 
-        # update neighbors with topological preservation
-        delta = self.en * np.multiply(hi.reshape(-1, 1)*influences.reshape(-1, 1), (x - w_neighbours))
-        self.A[b_neighbours] = np.round(w_neighbours + delta)
+            # Update neighbors with topological preservation
+            delta = self.en * np.multiply(hi.reshape(-1, 1) * influences.reshape(-1, 1), (x - w_neighbours))
+            self.A[b_neighbours] = w_neighbours + delta
+            
+            if self.debug:
+                logger.debug(f"Updated node {w} and {np.sum(b_neighbours)} neighbors")
 
     def _age(self, w):
+        """
+        Increase age of all connections to/from node w
+        
+        Parameters:
+        w: Index of winner node
+        """
+        # Get neighbor indices
         b_neighbours = self._get_neighbours(w)
+        
+        # Increment ages of all connections to neighbors
         self.ages[w, b_neighbours] += 1
         self.ages[b_neighbours, w] += 1
 
     def _reduce_firing(self, w):
+        """
+        Reduce firing counter for winner node and its neighbors
+        
+        Parameters:
+        w: Winner node index
+        """
+        # Current timestep
         t = self.t
+        old_firing = self.firing_vector[w]
+        # Update winner's firing rate
         self.firing_vector[w] = self.h0 - self.S / self.ab * (1 - np.exp(-self.ab * t / self.tb))
+        # Add debug print
+        # print(f"Node {w} - Firing before: {old_firing:.4f}, after: {self.firing_vector[w]:.4f}, t={self.t}")
+
+        # Update neighbors' firing rates
         b_neighbours = self._get_neighbours(w)
-        self.firing_vector[b_neighbours] = self.h0 - self.S / self.an * (1 - np.exp(-self.an * t / self.tn))
+        if np.any(b_neighbours):
+            self.firing_vector[b_neighbours] = self.h0 - self.S / self.an * (1 - np.exp(-self.an * t / self.tn))
 
     def train(self, X, epochs=1):
+        """
+        Train the network on input data
+        
+        Parameters:
+        X: Input data [samples, features]
+        epochs: Number of training epochs
+        
+        Returns:
+        self: For method chaining
+        """
+        # Ensure data is float type
         X = X.astype(float)
+        
+        # Initialize network if not already done
         if self.A is None:
             self.initialize(X)
-        for _ in range(epochs):
-            for x in X:
+            
+        # Training loop
+        for epoch in range(epochs):
+            for i, x in enumerate(X):
+              
+                # Find best matching units
                 b1, b2 = self._best(x)
-                if self._below_activity(x, b1) and self._below_firing(b1):
+              
+                # Check if we need to add a new node
+                # Note: Logic matches the improved version, adding node when activity is low and firing is high
+                activity_below = self._below_activity(x, b1)
+                firing_above = not self._below_firing(b1)
+                
+                if activity_below and firing_above:
                     self._add_new_node(b1, b2, x)
                 else:
+                    # Adapt existing nodes
                     self._adapt(b1, x)
                     self._age(b1)
                     self._reduce_firing(b1)
+                
+                # Increment timestep
                 self.t += 1
+                
+        return self
 
     def get_weights(self):
+        """Get the weight vectors of all nodes"""
         return self.A
 
     def get_connections(self):
+        """Get the connection matrix"""
         return self.connections
 
 
 class Value:
-    """Value computation class, similar to TMGWR's ValueClass"""
+    """Fixed Value computation class for HSOM"""
     def __init__(self, num_nodes=0):
         self.V = np.zeros(num_nodes)  # Value function
         self.R = np.zeros(num_nodes)  # Reward function
         self.w_g = None  # Index of goal node
+        self.initialized = False
 
     def Distance(self, x1, x2):
         """Calculate Euclidean distance between two vectors"""
-        return np.linalg.norm(x1 - x2)
+        x1_array = np.array(x1)
+        x2_array = np.array(x2)
+        return np.linalg.norm(x1_array - x2_array)
 
-    def ComputeReward(self, nodes, connections, goal):
+    def _resize_if_needed(self, num_nodes):
+        """Resize value and reward arrays if network has grown, preserving existing values"""
+        if len(self.V) < num_nodes:
+            # Preserve existing values and extend with zeros
+            old_V = self.V.copy()
+            old_R = self.R.copy()
+            
+            self.V = np.zeros(num_nodes)
+            self.R = np.zeros(num_nodes)
+            
+            # Copy old values back
+            if len(old_V) > 0:
+                self.V[:len(old_V)] = old_V
+                self.R[:len(old_R)] = old_R
+            
+            self.initialized = False  # Need to recompute rewards for new nodes
+
+    def ComputeReward(self, node_positions, connections, goal):
         """Compute reward function based on distance to goal"""
-        self.R = np.zeros(len(nodes))
+        num_nodes = len(node_positions)
+        self._resize_if_needed(num_nodes)
+        
+        if num_nodes == 0:
+            return
         
         # Find node closest to goal
-        D = []
-        for i, (_, pos) in enumerate(nodes):
-            D.append(self.Distance(goal, pos))
+        distances = []
+        for i, pos in enumerate(node_positions):
+            distances.append(self.Distance(goal, pos))
         
-        self.w_g = np.argmin(D)
+        self.w_g = np.argmin(distances)
         
         # Set rewards based on distance to goal
-        for i in range(len(nodes)):
+        for i in range(num_nodes):
             if i == self.w_g:
                 self.R[i] = 10  # High reward for goal node
             else:
                 # Exponential decay based on distance to goal
-                _, pos_i = nodes[i]
+                pos_i = node_positions[i]
                 distance = self.Distance(goal, pos_i)
                 self.R[i] = np.exp(-distance**2 / 200)  # Adjusted scale factor
 
-    def ComputeValue(self, nodes, connections, goal, gamma=0.99):
-        """Compute value function using value iteration"""
-        num_nodes = len(nodes)
-        self.V = np.zeros(num_nodes)
+    def ComputeValue(self, node_positions, connections, goal, gamma=0.99, max_iterations=50):
+        """
+        Compute value function using value iteration with proper convergence
         
-        # Compute rewards first
-        self.ComputeReward(nodes, connections, goal)
+        Parameters:
+        - node_positions: List of node positions
+        - connections: Adjacency matrix
+        - goal: Goal position
+        - gamma: Discount factor
+        - max_iterations: Maximum number of value iterations
+        """
+        num_nodes = len(node_positions)
         
-        # Value iteration
-        for _ in range(100):  # Fixed number of iterations
+        if num_nodes == 0:
+            return np.array([])
+        
+        # Resize arrays if needed (preserving existing values)
+        self._resize_if_needed(num_nodes)
+        
+        # Compute rewards (only if not initialized or if goal changed)
+        self.ComputeReward(node_positions, connections, goal)
+        
+        # Value iteration with convergence check
+        prev_V = self.V.copy()
+        
+        for iteration in range(max_iterations):
+            new_V = self.V.copy()
+            
             for i in range(num_nodes):
                 # Get neighboring nodes
-                neighbors = np.where(connections[i, :] == 1)[0]
-                
-                if len(neighbors) > 0:
-                    # Calculate maximum value from neighbors
-                    neighbor_values = self.V[neighbors]
-                    max_value = np.max(neighbor_values) if len(neighbor_values) > 0 else 0
+                if i < len(connections):
+                    neighbors = np.where(connections[i, :] == 1)[0]
                     
-                    # Update value using Bellman equation
-                    self.V[i] = self.R[i] + gamma * max_value
+                    if len(neighbors) > 0:
+                        # Calculate maximum value from neighbors
+                        neighbor_values = self.V[neighbors]
+                        max_neighbor_value = np.max(neighbor_values) if len(neighbor_values) > 0 else 0
+                        
+                        # Update value using Bellman equation
+                        new_V[i] = self.R[i] + gamma * max_neighbor_value
+                    else:
+                        # No neighbors, just use reward
+                        new_V[i] = self.R[i]
+                else:
+                    # Node index beyond connection matrix, use reward only
+                    new_V[i] = self.R[i]
+            
+            # Check for convergence
+            if np.allclose(new_V, self.V, rtol=1e-6):
+                break
+                
+            self.V = new_V
         
+        self.initialized = True
         return self.V
 
 
 class Action:
-    """Action selection class, similar to TMGWR's ActionClass"""
+    """Fixed Action selection class for HSOM"""
     def __init__(self):
         self.indEX = None  # Expected next node index
 
     def Distance(self, x1, x2):
         """Calculate Euclidean distance between two vectors"""
-        return np.linalg.norm(x1 - x2)
+        x1_array = np.array(x1)
+        x2_array = np.array(x2)
+        return np.linalg.norm(x1_array - x2_array)
 
-    def actionSelect(self, state, nodes, values, connections, action_mappings):
-        """Select action based on current state and value function"""
+    def actionSelect(self, state, node_positions, values, connections, action_mappings):
+        """
+        Select action based on current state and value function with improved fallback
+        
+        Parameters:
+        - state: Current state position
+        - node_positions: List of all node positions  
+        - values: Value function for all nodes
+        - connections: Adjacency matrix
+        - action_mappings: Dictionary mapping (from_node, to_node) -> action
+        """
+        if len(node_positions) == 0:
+            return random.randint(0, 3)
+        
         # Find closest node to current state
         min_dist = float('inf')
         current_node_idx = None
         
-        for i, (_, pos) in enumerate(nodes):
+        for i, pos in enumerate(node_positions):
             dist = self.Distance(state, pos)
             if dist < min_dist:
                 min_dist = dist
                 current_node_idx = i
         
         if current_node_idx is None:
-            return random.randint(0, 3)  # Default to random action if no node found
+            return random.randint(0, 3)
         
         # Find connected nodes
-        connected_nodes = np.where(connections[current_node_idx, :] == 1)[0]
+        if current_node_idx < len(connections):
+            connected_nodes = np.where(connections[current_node_idx, :] == 1)[0]
+        else:
+            connected_nodes = np.array([])
         
         if len(connected_nodes) == 0:
-            return random.randint(0, 3)  # Default to random action if no connections
+            # No connections yet, explore randomly
+            return random.randint(0, 3)
         
-        # Find node with highest value
-        neighbor_values = values[connected_nodes]
-        best_neighbor_idx = connected_nodes[np.argmax(neighbor_values)]
+        # Find node with highest value among connected nodes
+        best_neighbor_idx = None
+        best_value = -float('inf')
+        
+        for neighbor_idx in connected_nodes:
+            if neighbor_idx < len(values) and values[neighbor_idx] > best_value:
+                best_value = values[neighbor_idx]
+                best_neighbor_idx = neighbor_idx
+        
+        if best_neighbor_idx is None:
+            return random.randint(0, 3)
         
         # Set expected next node for explainability
         self.indEX = best_neighbor_idx
@@ -264,16 +591,37 @@ class Action:
         if key in action_mappings:
             return action_mappings[key]
         else:
-            return random.randint(0, 3)  # Default to random if no action mapping found
+            # Fallback: try to move toward the best neighbor
+            current_pos = np.array(node_positions[current_node_idx])
+            target_pos = np.array(node_positions[best_neighbor_idx])
+            
+            # Calculate direction vector
+            direction = target_pos - current_pos
+            
+            # Choose action based on dominant direction
+            if abs(direction[1]) > abs(direction[0]):  # Y movement is larger
+                if direction[1] > 0:
+                    return 1  # Down
+                else:
+                    return 0  # Up
+            else:  # X movement is larger  
+                if direction[0] > 0:
+                    return 2  # Right
+                else:
+                    return 3  # Left
 
 
 class HierarchicalGWRSOMAgent:
     def __init__(self, lower_dim=1, higher_dim=2, epsilon_b=0.35, epsilon_n=0.15, 
-                 beta=0.7, delta=0.79, T_max=20, N_max=300, eta=0.5, phi=0.9, sigma=0.5):
+                 beta=0.7, delta=0.5, T_max=20, N_max=300, eta=0.5, phi=0.9, sigma=0.5):
         # Initialize lower level networks
-        self.lower_x = GWRSOM(a=0.4, h=0.1)
-        self.lower_y = GWRSOM(a=0.4, h=0.1)
+        self.lower_x = GWRSOM(a=0.0001, h=0.0001)
+        self.lower_y = GWRSOM(a=0.0001, h=0.0001)
         
+        self.seen_bmu_pairs = set()
+        self.layer1_insertions = 0
+        self.layer1_blocks = 0
+
         # Higher level stores patterns AND their continuous positions
         self.nodes = []  # Will store tuples of (pattern, continuous_position)
         self.connections = np.zeros((0, 0))  # Connectivity between nodes
@@ -296,6 +644,8 @@ class HierarchicalGWRSOMAgent:
         self.T_max = T_max  # Maximum age for connections
         self.N_max = N_max  # Maximum number of nodes
         self.pattern_ages = np.zeros((0, 0))  # Age of connections between patterns
+
+        self.state_node_coverage = {}  # Maps state (rounded) to node index
 
     def train_lower_networks(self, training_data, epochs=100):
         """Pre-train lower level networks with actual maze positions"""
@@ -320,8 +670,23 @@ class HierarchicalGWRSOMAgent:
         
         # Get best matching units from lower networks
         x_bmus = self.lower_x.find_best_matching_units(x_data)
+        if not isinstance(x_bmus, (list, tuple)) or len(x_bmus) < 2:
+            raise ValueError(f"Expected list of at least 2 BMU indices, got: {x_bmus}")
+        x_bmus_id = x_bmus[0]
         y_bmus = self.lower_y.find_best_matching_units(y_data)
+        if not isinstance(y_bmus, (list, tuple)) or len(y_bmus) < 2:
+            raise ValueError(f"Expected list of at least 2 BMU indices, got: {x_bmus}")
+        y_bmus_id = y_bmus[0]
         
+        
+        pair = tuple(sorted((x_bmus_id, y_bmus_id)))
+
+        # if pair not in self.seen_bmu_pairs:
+        #     self.seen_bmu_pairs.add(pair)
+        #     print(f"New BMU pair added to Layer 1 input: {pair}")
+        # else:
+        #     print(f"Repeated BMU pair (not added again): {pair}")
+
         # Create binary vectors
         x_binary = np.zeros(len(self.lower_x.A))
         y_binary = np.zeros(len(self.lower_y.A))
@@ -337,71 +702,71 @@ class HierarchicalGWRSOMAgent:
         else:
             y_binary[y_bmus] = 1
         
-        return (tuple(x_binary), tuple(y_binary))
+        # print("[DEBUG] BMUs:", x_bmus[0], y_bmus[0])  # assuming one BMU per input
+        # print("[DEBUG] Binary pattern key:", tuple(x_binary), tuple(y_binary))
+        
+        return np.array(x_binary), np.array(y_binary)
 
     def find_node_index(self, pattern):
-        """Find the index of a node with the given pattern"""
         for i, node_data in enumerate(self.nodes):
-            stored_pattern = node_data[0]  # Extract pattern from (pattern, position) tuple
-            if stored_pattern == pattern:
+            stored_pattern = node_data[0]
+            if (np.array_equal(stored_pattern[0], pattern[0]) and
+                np.array_equal(stored_pattern[1], pattern[1])):
                 return i
         return None
 
+
     def update_model(self, next_state, action):
         """Update the model with a new state-action pair"""
-        # Get binary pattern for the next state
         pattern = self.get_firing_pattern(next_state)
-        
-        # Check if node exists for this pattern
         node_idx = self.find_node_index(pattern)
-        
+    
         if node_idx is None:
-            # Pattern doesn't exist yet, create a new node
-            self.nodes.append((pattern, next_state))  # Store both pattern and position
-            
-            # Grow connection matrices
+            # print(f"[DEBUG] NEW NODE created for pattern: ({pattern[0].argmax()}, {pattern[1].argmax()})")
+            # print(f"[DEBUG] Total high-level nodes before adding: {len(self.nodes)}")
+
+            self.nodes.append((pattern, next_state))
             new_size = len(self.nodes)
-            new_connections = np.zeros((new_size, new_size))
-            new_ages = np.zeros((new_size, new_size))
-            
-            if new_size > 1:
-                # Copy existing data
+
+            # Grow or initialize connections
+            if self.connections.size == 0:
+                self.connections = np.zeros((1, 1))
+                self.pattern_ages = np.zeros((1, 1))
+            else:
+                new_connections = np.zeros((new_size, new_size))
+                new_ages = np.zeros((new_size, new_size))
                 new_connections[:-1, :-1] = self.connections
                 new_ages[:-1, :-1] = self.pattern_ages
-                
-            self.connections = new_connections
-            self.pattern_ages = new_ages
-            
-            # The index of the new node
-            node_idx = len(self.nodes) - 1
+                self.connections = new_connections
+                self.pattern_ages = new_ages
+
+            node_idx = new_size - 1
+
         else:
-            # Update position information for existing pattern
-            # Using a weighted average (0.9 old, 0.1 new)
+            # Update position with weighted average
             old_pattern, old_position = self.nodes[node_idx]
             updated_position = 0.9 * np.array(old_position) + 0.1 * np.array(next_state)
             self.nodes[node_idx] = (old_pattern, updated_position)
-        
-        # Create connection from previous node if exists
+
+        # Create connection from previous node
         if self.prev_node_idx is not None:
-            # Create a connection between the previous and current node
             self.connections[self.prev_node_idx, node_idx] = 1
             self.pattern_ages[self.prev_node_idx, node_idx] = 0
-            
-            # Store the action that led to this transition
             self.action_mappings[(self.prev_node_idx, node_idx)] = action
-            
-            # Age all other connections from the previous node
+
+            # Age other connections from previous node
             connected = np.where(self.connections[self.prev_node_idx] == 1)[0]
             for c in connected:
                 if c != node_idx:
                     self.pattern_ages[self.prev_node_idx, c] += 1
-            
-            # Remove old connections
-            old_connections = self.pattern_ages > self.T_max
-            self.connections[old_connections] = 0
-            self.pattern_ages[old_connections] = 0
-        
-        # Set current node as previous for next update
+
+            # Prune old connections
+            old = self.pattern_ages > self.T_max
+            self.connections[old] = 0
+            self.pattern_ages[old] = 0
+        # Track which valid position maps to which node
+        rounded_pos = tuple(np.round(next_state[:2]).astype(int))
+        self.state_node_coverage[rounded_pos] = node_idx
         self.prev_node_idx = node_idx
 
     def select_action(self, current_state):
@@ -417,14 +782,18 @@ class HierarchicalGWRSOMAgent:
             # Ensure ValueClass has the right size
             if len(self.nodes) != len(self.ValueClass.V):
                 self.ValueClass = Value(len(self.nodes))
-                
-            # Compute value function
-            V = self.ValueClass.ComputeValue(self.nodes, self.connections, self.goal)
             
-            # Use action selection mechanism
+            # Create a list of node positions for value computation
+            # This is the key modification - use only positions for distance calculations
+            node_positions = [pos for _, pos in self.nodes]
+                
+            # Compute value function using positions, not patterns
+            V = self.ValueClass.ComputeValue(node_positions, self.connections, self.goal)
+            
+            # Use action selection mechanism with positions
             action = self.ActionClass.actionSelect(
                 current_state, 
-                self.nodes, 
+                node_positions,  # Pass positions instead of the full nodes
                 V, 
                 self.connections, 
                 self.action_mappings

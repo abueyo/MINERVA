@@ -5,6 +5,7 @@ import random
 import tkinter as tk
 
 
+
 class MazeMaps: 
     #standard default maze 
     '''
@@ -20,27 +21,27 @@ class MazeMaps:
         ['X', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'X'], 
         ['X', 'X', ' ', ' ', ' ', ' ', ' ', 'X', 'X'], 
         ['X', 'X', ' ', ' ', 'X', ' ', ' ', 'X', 'X'], 
-        ['X', 'X', 'X', ' ', 'X', ' ', ' ', ' ', 'X'], 
+        ['X', ' ', ' ', ' ', 'X', ' ', ' ', ' ', 'X'], 
         ['X', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'X'], 
         ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X'], 
     ]
     
-    # default_player_pos_index = (1, 1) #row, column
-    # default_goal_pos_index = (7, 1) #row, column
+    default_player_pos_index = (1, 1) #row, column
+    default_goal_pos_index = (8, 1) #row, column
 
     # 5x5 Maze Configuration
     maze_5x5 = [
         ['X', 'X', 'X', 'X', 'X', 'X', 'X'],
         ['X', ' ', ' ', ' ', ' ', ' ', 'X'],
-        ['X', ' ', 'X', 'X', 'X', ' ', 'X'],
-        ['X', ' ', 'X', ' ', ' ', ' ', 'X'],
-        ['X', ' ', 'X', ' ', 'X', 'X', 'X'],
+        ['X', ' ', ' ', 'X', ' ', ' ', 'X'],
+        ['X', ' ', ' ', 'X', ' ', ' ', 'X'],
+        ['X', ' ', ' ', ' ', ' ', ' ', 'X'],
         ['X', ' ', ' ', ' ', ' ', ' ', 'X'],
         ['X', 'X', 'X', 'X', 'X', 'X', 'X']
     ]
 
     # default_player_pos_index = (1, 1) #row, column
-    # default_goal_pos_index = (5, 1) #row, column
+    # default_goal_pos_index = (6, 1) #row, column
 
     # 10x10 Maze Configuration
     maze_10x10 = [
@@ -59,7 +60,7 @@ class MazeMaps:
     ]
 
     # default_player_pos_index = (1, 1) #row, column
-    # default_goal_pos_index = (9, 1) #row, column
+    # default_goal_pos_index = (10, 1) #row, column
 
     # 15x15 Maze Configuration
     maze_15x15 = [
@@ -69,7 +70,7 @@ class MazeMaps:
         ["X", " ", "X", " ", " ", " ", " ", "X", " ", "X", " ", " ", " ", " ", "X", " ", "X"],
         ['X', ' ', 'X', ' ', 'X', 'X', 'X', 'X', ' ', 'X', 'X', 'X', 'X', 'X', 'X', ' ', 'X'],
         ['X', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'X', ' ', ' ', ' ', ' ', ' ', ' ', 'X'], 
-        ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', ' ', 'X', ' ', 'X', 'X', 'X'],
+        ['X', 'X', 'X', 'X', 'X', 'X', 'X', ' ', 'X', 'X', 'X', ' ', 'X', ' ', 'X', 'X', 'X'],
         ['X', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'X', ' ', ' ', ' ', 'X'], 
         ['X', ' ', 'X', ' ', 'X', ' ', 'X', ' ', 'X', 'X', 'X', ' ', 'X', ' ', 'X', 'X', 'X'], 
         ['X', ' ', ' ', ' ', 'X', 'X', 'X', ' ', 'X', ' ', 'X', ' ', 'X', ' ', ' ', ' ', 'X'], 
@@ -83,7 +84,7 @@ class MazeMaps:
     ]
     
     # default_player_pos_index = (1, 1) #row, column
-    # default_goal_pos_index = (15, 1) #row, column 
+    # default_goal_pos_index = (16, 1) #row, column 
 
     # 20x20 Maze Configuration
     maze_20x20 = [
@@ -111,11 +112,11 @@ class MazeMaps:
         ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'X']
     ]
 
-    default_player_pos_index = (1, 1) #row, column
-    default_goal_pos_index = (19, 1) #row, column
+    # default_player_pos_index = (1, 1) #row, column
+    # default_goal_pos_index = (20, 1) #row, column
     
     def get_default_map(): 
-        return MazeMaps.maze_20x20, MazeMaps.default_player_pos_index, MazeMaps.default_goal_pos_index
+        return MazeMaps.default_maze_map, MazeMaps.default_player_pos_index, MazeMaps.default_goal_pos_index
     
 
     def get_default_map_multiple_goals(): 
@@ -135,7 +136,7 @@ class MazeMaps:
                                            ((7, 15), (6, 13))]   
         return MazeMaps.default_maze_map, MazeMaps.default_player_pos_index, varriable_wall_goal_index_pairs
 
-
+    
 
     '''
     get maze scalled by a factor
@@ -271,7 +272,12 @@ class MazeMaps:
 
         return maze_map, player_pos_index, goal_pos_index
 
-
+valid_positions = [
+        (x, y)
+        for y, row in enumerate(MazeMaps.default_maze_map)
+        for x, val in enumerate(row)
+        if val == ' '
+    ]
 
 #generates a random maze
 class MazeGenerator: 
